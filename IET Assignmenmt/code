@@ -1,0 +1,518 @@
+/* =====================================================================
+   INTELLIGENT DATA CENTER RESOURCE AND STORAGE OPTIMIZATION SYSTEM
+   -----------------------------------------------------------------
+   Modules:
+     1. CPU Scheduling      : FCFS, SJF (NP), Priority (NP), Round Robin
+     2. Deadlock Analysis    : Banker's Algorithm (Safety Check)
+     3. Memory Management    : Paging & Segmentation
+     4. File Allocation      : Contiguous, Linked, Indexed
+     5. Disk Scheduling      : FCFS, SSTF, SCAN, C-SCAN, LOOK, C-LOOK
+   All modules run on ONE common workload so results are comparable.
+   ===================================================================== */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#define MAXP 20
+#define MAXR 5
+#define MAXF 10
+#define MAXD 20
+#define MAXCYL 200
+
+/* ---------------------------------------------------------------------
+   ================  1. CPU SCHEDULING MODULE  =========================
+   --------------------------------------------------------------------- */
+typedef struct {
+    int pid, at, bt, pr;      /* pid, arrival, burst, priority(1=highest) */
+    int ct, wt, tat, rt;      /* completion, waiting, turnaround, response */
+    int remaining;
+    int started;
+} Process;
+
+Process orig[MAXP];
+int nproc;
+
+void loadProcesses(Process p[]) {
+    memcpy(p, orig, sizeof(Process) * nproc);
+    for (int i = 0; i < nproc; i++) {
+        p[i].remaining = p[i].bt;
+        p[i].started = 0;
+        p[i].ct = p[i].wt = p[i].tat = p[i].rt = 0;
+    }
+}
+
+void printGantt(int order[], int n) {
+    printf("Execution order (PID sequence): ");
+    for (int i = 0; i < n; i++) printf("P%d ", order[i]);
+    printf("\n");
+}
+
+void printSummary(const char *name, Process p[], int n, int totalTime) {
+    double avgWT = 0, avgTAT = 0, avgRT = 0;
+    printf("\n----- %s : Result Table -----\n", name);
+    printf("PID\tAT\tBT\tCT\tWT\tTAT\tRT\n");
+    for (int i = 0; i < n; i++) {
+        printf("P%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+               p[i].pid, p[i].at, p[i].bt, p[i].ct, p[i].wt, p[i].tat, p[i].rt);
+        avgWT += p[i].wt; avgTAT += p[i].tat; avgRT += p[i].rt;
+    }
+    avgWT /= n; avgTAT /= n; avgRT /= n;
+    int busy = 0;
+    for (int i = 0; i < n; i++) busy += p[i].bt;
+    double cpuUtil = (100.0 * busy) / totalTime;
+    printf("Average Waiting Time    : %.2f\n", avgWT);
+    printf("Average Turnaround Time : %.2f\n", avgTAT);
+    printf("Average Response Time   : %.2f\n", avgRT);
+    printf("CPU Utilization         : %.2f %%\n", cpuUtil);
+}
+
+/* ---- FCFS ---- */
+void fcfs() {
+    Process p[MAXP];
+    loadProcesses(p);
+    /* sort by arrival time (stable) */
+    for (int i = 0; i < nproc - 1; i++)
+        for (int j = 0; j < nproc - 1 - i; j++)
+            if (p[j].at > p[j + 1].at) { Process t = p[j]; p[j] = p[j + 1]; p[j + 1] = t; }
+
+    int time = 0, order[MAXP];
+    for (int i = 0; i < nproc; i++) {
+        if (time < p[i].at) time = p[i].at;
+        p[i].rt = time - p[i].at;
+        time += p[i].bt;
+        p[i].ct = time;
+        p[i].tat = p[i].ct - p[i].at;
+        p[i].wt = p[i].tat - p[i].bt;
+        order[i] = p[i].pid;
+    }
+    printGantt(order, nproc);
+    printSummary("FCFS", p, nproc, time);
+}
+
+/* ---- SJF Non-Preemptive ---- */
+void sjf() {
+    Process p[MAXP];
+    loadProcesses(p);
+    int done[MAXP] = {0}, completed = 0, time = 0, order[MAXP], oi = 0;
+    while (completed < nproc) {
+        int idx = -1, minBT = 1e9;
+        for (int i = 0; i < nproc; i++)
+            if (!done[i] && p[i].at <= time && p[i].bt < minBT) { minBT = p[i].bt; idx = i; }
+        if (idx == -1) { time++; continue; }
+        p[idx].rt = time - p[idx].at;
+        time += p[idx].bt;
+        p[idx].ct = time;
+        p[idx].tat = p[idx].ct - p[idx].at;
+        p[idx].wt = p[idx].tat - p[idx].bt;
+        done[idx] = 1; completed++;
+        order[oi++] = p[idx].pid;
+    }
+    printGantt(order, oi);
+    printSummary("SJF (Non-Preemptive)", p, nproc, time);
+}
+
+/* ---- Priority Non-Preemptive (lower number = higher priority) ---- */
+void priorityScheduling() {
+    Process p[MAXP];
+    loadProcesses(p);
+    int done[MAXP] = {0}, completed = 0, time = 0, order[MAXP], oi = 0;
+    while (completed < nproc) {
+        int idx = -1, best = 1e9;
+        for (int i = 0; i < nproc; i++)
+            if (!done[i] && p[i].at <= time && p[i].pr < best) { best = p[i].pr; idx = i; }
+        if (idx == -1) { time++; continue; }
+        p[idx].rt = time - p[idx].at;
+        time += p[idx].bt;
+        p[idx].ct = time;
+        p[idx].tat = p[idx].ct - p[idx].at;
+        p[idx].wt = p[idx].tat - p[idx].bt;
+        done[idx] = 1; completed++;
+        order[oi++] = p[idx].pid;
+    }
+    printGantt(order, oi);
+    printSummary("Priority Scheduling (Non-Preemptive)", p, nproc, time);
+}
+
+/* ---- Round Robin ---- */
+void roundRobin(int quantum) {
+    Process p[MAXP];
+    loadProcesses(p);
+    int queue[500], front = 0, rear = 0, inQueue[MAXP] = {0};
+    int time = 0, completed = 0, order[500], oi = 0;
+
+    /* sort by arrival for insertion handling */
+    int arr_order[MAXP];
+    for (int i = 0; i < nproc; i++) arr_order[i] = i;
+    for (int i = 0; i < nproc - 1; i++)
+        for (int j = 0; j < nproc - 1 - i; j++)
+            if (p[arr_order[j]].at > p[arr_order[j + 1]].at) {
+                int t = arr_order[j]; arr_order[j] = arr_order[j + 1]; arr_order[j + 1] = t;
+            }
+    int ai = 0;
+    time = p[arr_order[0]].at;
+    while (ai < nproc && p[arr_order[ai]].at <= time) { queue[rear++] = arr_order[ai]; inQueue[arr_order[ai]] = 1; ai++; }
+
+    while (completed < nproc) {
+        if (front == rear) { /* queue empty, jump to next arrival */
+            if (ai < nproc) { time = p[arr_order[ai]].at; queue[rear++] = arr_order[ai]; inQueue[arr_order[ai]] = 1; ai++; }
+            else break;
+            continue;
+        }
+        int idx = queue[front++];
+        if (!p[idx].started) { p[idx].rt = time - p[idx].at; p[idx].started = 1; }
+        int run = (p[idx].remaining < quantum) ? p[idx].remaining : quantum;
+        time += run;
+        p[idx].remaining -= run;
+        order[oi++] = p[idx].pid;
+        /* enqueue any new arrivals during this run */
+        while (ai < nproc && p[arr_order[ai]].at <= time) { queue[rear++] = arr_order[ai]; inQueue[arr_order[ai]] = 1; ai++; }
+        if (p[idx].remaining > 0) queue[rear++] = idx;
+        else { p[idx].ct = time; p[idx].tat = p[idx].ct - p[idx].at; p[idx].wt = p[idx].tat - p[idx].bt; completed++; }
+    }
+    printGantt(order, oi);
+    printSummary("Round Robin (Quantum = 3)", p, nproc, time);
+}
+
+/* ---------------------------------------------------------------------
+   ================  2. DEADLOCK ANALYSIS (BANKER'S) ===================
+   --------------------------------------------------------------------- */
+int bnk_n, bnk_m;
+int alloc_[MAXP][MAXR], maxm[MAXP][MAXR], need[MAXP][MAXR], avail[MAXR];
+
+void bankersAlgorithm() {
+    printf("\n----- Banker's Algorithm : Deadlock Avoidance / Safety Check -----\n");
+    for (int i = 0; i < bnk_n; i++)
+        for (int j = 0; j < bnk_m; j++)
+            need[i][j] = maxm[i][j] - alloc_[i][j];
+
+    printf("Process\tAllocation\tMax\t\tNeed\n");
+    for (int i = 0; i < bnk_n; i++) {
+        printf("P%d\t", i);
+        for (int j = 0; j < bnk_m; j++) printf("%d ", alloc_[i][j]);
+        printf("\t");
+        for (int j = 0; j < bnk_m; j++) printf("%d ", maxm[i][j]);
+        printf("\t");
+        for (int j = 0; j < bnk_m; j++) printf("%d ", need[i][j]);
+        printf("\n");
+    }
+    printf("Available: ");
+    for (int j = 0; j < bnk_m; j++) printf("%d ", avail[j]);
+    printf("\n");
+
+    int work[MAXR], finish[MAXP] = {0}, safeSeq[MAXP], si = 0;
+    for (int j = 0; j < bnk_m; j++) work[j] = avail[j];
+
+    int progress = 1;
+    while (progress) {
+        progress = 0;
+        for (int i = 0; i < bnk_n; i++) {
+            if (finish[i]) continue;
+            int ok = 1;
+            for (int j = 0; j < bnk_m; j++) if (need[i][j] > work[j]) { ok = 0; break; }
+            if (ok) {
+                for (int j = 0; j < bnk_m; j++) work[j] += alloc_[i][j];
+                finish[i] = 1;
+                safeSeq[si++] = i;
+                progress = 1;
+            }
+        }
+    }
+
+    int safe = 1;
+    for (int i = 0; i < bnk_n; i++) if (!finish[i]) safe = 0;
+
+    if (safe) {
+        printf("Result: SYSTEM IS IN A SAFE STATE\n");
+        printf("Safe Sequence: < ");
+        for (int i = 0; i < si; i++) printf("P%d ", safeSeq[i]);
+        printf(">\n");
+    } else {
+        printf("Result: SYSTEM IS IN AN UNSAFE STATE (Deadlock possible)\n");
+        printf("Processes that CANNOT complete: ");
+        for (int i = 0; i < bnk_n; i++) if (!finish[i]) printf("P%d ", i);
+        printf("\n");
+    }
+}
+
+/* ---------------------------------------------------------------------
+   ================  3. MEMORY MANAGEMENT  ==============================
+   --------------------------------------------------------------------- */
+void pagingAnalysis(int procSize[], int n, int pageSize, int totalFrames) {
+    printf("\n----- Paging Analysis -----\n");
+    printf("Page Size = %d KB | Total Frames Available = %d (%d KB)\n",
+           pageSize, totalFrames, pageSize * totalFrames);
+    printf("Proc\tSize(KB)\tPagesNeeded\tFrameAlloc(KB)\tInternalFrag(KB)\n");
+    int totalPages = 0, totalIntFrag = 0, totalUsed = 0;
+    for (int i = 0; i < n; i++) {
+        int pages = (int)ceil((double)procSize[i] / pageSize);
+        int alloc = pages * pageSize;
+        int frag = alloc - procSize[i];
+        printf("P%d\t%d\t\t%d\t\t%d\t\t%d\n", i + 1, procSize[i], pages, alloc, frag);
+        totalPages += pages; totalIntFrag += frag; totalUsed += procSize[i];
+    }
+    double memUtil = 0;
+    int totalMem = pageSize * totalFrames;
+    if (totalPages <= totalFrames)
+        memUtil = (100.0 * totalUsed) / totalMem;
+    else
+        memUtil = (100.0 * totalUsed) / totalMem; /* still shows demand vs supply */
+    printf("Total Frames Needed     : %d %s\n", totalPages,
+           (totalPages > totalFrames) ? "(EXCEEDS available frames -> page-in/out & possible page faults)" : "(fits in available frames)");
+    printf("Total Internal Fragmentation : %d KB\n", totalIntFrag);
+    printf("Memory Utilization           : %.2f %%\n", memUtil);
+}
+
+void segmentationAnalysis(int segSize[], int n, int partition[], int npart) {
+    printf("\n----- Segmentation Analysis (First-Fit on Variable Partitions) -----\n");
+    int used[MAXP] = {0};
+    int allocatedPart[MAXP]; for (int i = 0; i < n; i++) allocatedPart[i] = -1;
+    int partUsed[MAXP] = {0};
+    int totalExtFrag = 0, totalAllocated = 0, unallocated = 0;
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < npart; j++) {
+            if (!partUsed[j] && partition[j] >= segSize[i]) {
+                allocatedPart[i] = j;
+                partUsed[j] = 1;
+                totalExtFrag += (partition[j] - segSize[i]);
+                totalAllocated += segSize[i];
+                break;
+            }
+        }
+        if (allocatedPart[i] == -1) unallocated++;
+    }
+    printf("Segment\tSize(KB)\tPartitionAlloc\tPartSize(KB)\tExtFrag(KB)\n");
+    for (int i = 0; i < n; i++) {
+        if (allocatedPart[i] != -1)
+            printf("S%d\t%d\t\tPart-%d\t\t%d\t\t%d\n", i + 1, segSize[i], allocatedPart[i] + 1,
+                   partition[allocatedPart[i]], partition[allocatedPart[i]] - segSize[i]);
+        else
+            printf("S%d\t%d\t\tNOT ALLOCATED\t-\t\t-\n", i + 1, segSize[i]);
+    }
+    int totalPartMem = 0;
+    for (int i = 0; i < npart; i++) totalPartMem += partition[i];
+    printf("Total External Fragmentation : %d KB\n", totalExtFrag);
+    printf("Unallocated Segments          : %d\n", unallocated);
+    printf("Memory Utilization            : %.2f %%\n", (100.0 * totalAllocated) / totalPartMem);
+}
+
+/* ---------------------------------------------------------------------
+   ================  4. FILE ALLOCATION STRATEGIES  =====================
+   --------------------------------------------------------------------- */
+void fileAllocationAnalysis(int fileBlocks[], int nf, int totalDiskBlocks, int preUsed) {
+    printf("\n----- File Allocation Strategy Comparison -----\n");
+    printf("Total Disk Blocks = %d | Pre-occupied (fragmented) blocks = %d\n", totalDiskBlocks, preUsed);
+
+    /* Simulate a disk with 'preUsed' blocks scattered (every alternate block busy)
+       to create realistic external fragmentation for contiguous allocation. */
+    int disk[MAXCYL] = {0};
+    for (int i = 0; i < preUsed && i * 2 < totalDiskBlocks; i++) disk[i * 2] = 1; /* scattered holes */
+
+    int freeBlocksTotal = 0;
+    for (int i = 0; i < totalDiskBlocks; i++) if (!disk[i]) freeBlocksTotal++;
+
+    /* ---- Contiguous Allocation ---- */
+    int diskC[MAXCYL]; memcpy(diskC, disk, sizeof(disk));
+    int contigSuccess = 0, contigFail = 0, contigBlocksUsed = 0;
+    for (int f = 0; f < nf; f++) {
+        int need = fileBlocks[f], run = 0, start = -1;
+        for (int i = 0; i < totalDiskBlocks; i++) {
+            if (!diskC[i]) { if (run == 0) start = i; run++; if (run == need) break; }
+            else run = 0;
+        }
+        if (run == need) {
+            for (int i = start; i < start + need; i++) diskC[i] = 1;
+            contigSuccess++; contigBlocksUsed += need;
+        } else contigFail++;
+    }
+
+    /* ---- Linked Allocation (any free block works, +0 extra block overhead,
+           pointer stored inside block so no separate block, but access is sequential) ---- */
+    int totalFileBlocks = 0;
+    for (int f = 0; f < nf; f++) totalFileBlocks += fileBlocks[f];
+    int linkedSuccess = (totalFileBlocks <= freeBlocksTotal) ? nf : 0;
+    int linkedBlocksUsed = totalFileBlocks; /* no contiguity required */
+
+    /* ---- Indexed Allocation (needs +1 index block per file) ---- */
+    int indexedBlocksUsed = totalFileBlocks + nf;
+    int indexedSuccess = (indexedBlocksUsed <= freeBlocksTotal) ? nf : 0;
+
+    printf("\nMethod\t\tFilesAllocated\tBlocksUsed\tOverheadBlocks\tAvgAccessCost(blocks)\n");
+    printf("Contiguous\t%d/%d\t\t%d\t\t0\t\t1 (direct, seq. fast)\n", contigSuccess, nf, contigBlocksUsed);
+    double avgLinked = 0; for (int f = 0; f < nf; f++) avgLinked += (fileBlocks[f] + 1) / 2.0;
+    avgLinked /= nf;
+    printf("Linked\t\t%d/%d\t\t%d\t\t0\t\t%.2f (must traverse chain)\n", linkedSuccess, nf, linkedBlocksUsed, avgLinked);
+    printf("Indexed\t\t%d/%d\t\t%d\t\t%d\t\t2 (index + 1 data block)\n", indexedSuccess, nf, indexedBlocksUsed, nf);
+
+    printf("\nContiguous: %s due to external fragmentation (%d holes pre-occupied on disk).\n",
+           (contigFail > 0) ? "SOME FILES FAILED to allocate" : "all files allocated successfully",
+           preUsed);
+    printf("Linked   : No external fragmentation; scattered blocks are fine; poor random access.\n");
+    printf("Indexed  : No external fragmentation; %d extra index blocks used; good random access.\n", nf);
+}
+
+/* ---------------------------------------------------------------------
+   ================  5. DISK SCHEDULING  ================================
+   --------------------------------------------------------------------- */
+int cmpInt(const void *a, const void *b) { return (*(int *)a - *(int *)b); }
+
+void diskFCFS(int req[], int n, int head) {
+    int total = 0, cur = head;
+    printf("FCFS  Order: %d", head);
+    for (int i = 0; i < n; i++) { total += abs(req[i] - cur); cur = req[i]; printf(" -> %d", cur); }
+    printf("\nFCFS  Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+void diskSSTF(int req[], int n, int head) {
+    int visited[MAXD] = {0}, total = 0, cur = head;
+    printf("SSTF  Order: %d", head);
+    for (int c = 0; c < n; c++) {
+        int best = -1, bestDist = 1e9;
+        for (int i = 0; i < n; i++)
+            if (!visited[i] && abs(req[i] - cur) < bestDist) { bestDist = abs(req[i] - cur); best = i; }
+        visited[best] = 1; total += bestDist; cur = req[best]; printf(" -> %d", cur);
+    }
+    printf("\nSSTF  Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+void diskSCAN(int req[], int n, int head, int maxCyl, int dirUp) {
+    int r[MAXD]; memcpy(r, req, sizeof(int) * n);
+    qsort(r, n, sizeof(int), cmpInt);
+    int total = 0, cur = head;
+    printf("SCAN  Order: %d", head);
+    if (dirUp) {
+        for (int i = 0; i < n; i++) if (r[i] >= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+        total += abs((maxCyl - 1) - cur); cur = maxCyl - 1; printf(" -> %d(end)", cur);
+        for (int i = n - 1; i >= 0; i--) if (r[i] < head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    } else {
+        for (int i = n - 1; i >= 0; i--) if (r[i] <= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+        total += abs(0 - cur); cur = 0; printf(" -> 0(end)");
+        for (int i = 0; i < n; i++) if (r[i] > head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    }
+    printf("\nSCAN  Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+void diskCSCAN(int req[], int n, int head, int maxCyl) {
+    int r[MAXD]; memcpy(r, req, sizeof(int) * n);
+    qsort(r, n, sizeof(int), cmpInt);
+    int total = 0, cur = head;
+    printf("C-SCAN Order: %d", head);
+    for (int i = 0; i < n; i++) if (r[i] >= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    total += abs((maxCyl - 1) - cur); cur = maxCyl - 1; printf(" -> %d(end)", cur);
+    total += (maxCyl - 1); cur = 0; printf(" -> 0(jump)");
+    for (int i = 0; i < n; i++) if (r[i] < head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    printf("\nC-SCAN Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+void diskLOOK(int req[], int n, int head, int dirUp) {
+    int r[MAXD]; memcpy(r, req, sizeof(int) * n);
+    qsort(r, n, sizeof(int), cmpInt);
+    int total = 0, cur = head;
+    printf("LOOK  Order: %d", head);
+    if (dirUp) {
+        for (int i = 0; i < n; i++) if (r[i] >= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+        for (int i = n - 1; i >= 0; i--) if (r[i] < head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    } else {
+        for (int i = n - 1; i >= 0; i--) if (r[i] <= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+        for (int i = 0; i < n; i++) if (r[i] > head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    }
+    printf("\nLOOK  Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+void diskCLOOK(int req[], int n, int head) {
+    int r[MAXD]; memcpy(r, req, sizeof(int) * n);
+    qsort(r, n, sizeof(int), cmpInt);
+    int total = 0, cur = head;
+    printf("C-LOOK Order: %d", head);
+    int firstAbove = -1;
+    for (int i = 0; i < n; i++) if (r[i] >= head) { total += abs(r[i] - cur); cur = r[i]; printf(" -> %d", cur); }
+    /* jump to smallest request (not to cylinder 0) */
+    int smallest = r[0];
+    if (cur != smallest && smallest < head) {
+        total += abs(cur - smallest);
+        cur = smallest;
+    }
+    for (int i = 0; i < n; i++) if (r[i] < head) { if(r[i]!=cur){total += abs(r[i]-cur); cur=r[i];} printf(" -> %d", cur); }
+    printf("\nC-LOOK Total Head Movement = %d | Avg Seek = %.2f\n", total, (double)total / n);
+}
+
+/* =====================================================================
+   MAIN
+   ===================================================================== */
+int main() {
+    printf("=====================================================================\n");
+    printf(" INTELLIGENT DATA CENTER RESOURCE AND STORAGE OPTIMIZATION SYSTEM\n");
+    printf("=====================================================================\n");
+
+    /* ---------------- SAMPLE WORKLOAD (single dataset used by ALL modules) --------------- */
+
+    /* ---- 1. Process set: 10 processes ---- */
+    nproc = 10;
+    int PID[10]  = {1,2,3,4,5,6,7,8,9,10};
+    int AT[10]   = {0,1,2,3,4,5,6,7,8,9};
+    int BT[10]   = {5,3,8,6,4,2,7,5,3,6};
+    int PR[10]   = {2,1,3,2,1,4,3,2,1,4};
+    for (int i = 0; i < nproc; i++) {
+        orig[i].pid = PID[i]; orig[i].at = AT[i]; orig[i].bt = BT[i]; orig[i].pr = PR[i];
+    }
+
+    printf("\n============== MODULE 1: CPU SCHEDULING ==============\n");
+    printf("Input Processes (PID, ArrivalTime, BurstTime, Priority):\n");
+    for (int i = 0; i < nproc; i++)
+        printf("P%d : AT=%d BT=%d Priority=%d\n", orig[i].pid, orig[i].at, orig[i].bt, orig[i].pr);
+
+    fcfs();
+    sjf();
+    priorityScheduling();
+    roundRobin(3);
+
+    /* ---- 2. Deadlock: Banker's Algorithm dataset (classic 5-process/3-resource) ---- */
+    printf("\n============== MODULE 2: DEADLOCK DETECTION / AVOIDANCE ==============\n");
+    bnk_n = 5; bnk_m = 3;
+    int A[5][3] = {{0,1,0},{2,0,0},{3,0,2},{2,1,1},{0,0,2}};
+    int M[5][3] = {{7,5,3},{3,2,2},{9,0,2},{2,2,2},{4,3,3}};
+    int AV[3] = {3,3,2};
+    for (int i = 0; i < bnk_n; i++)
+        for (int j = 0; j < bnk_m; j++) { alloc_[i][j] = A[i][j]; maxm[i][j] = M[i][j]; }
+    for (int j = 0; j < bnk_m; j++) avail[j] = AV[j];
+    bankersAlgorithm();
+
+    /* ---- 3. Memory Management dataset ---- */
+    printf("\n============== MODULE 3: MEMORY MANAGEMENT ==============\n");
+    int procSize[5] = {2200, 3600, 1200, 4800, 1500}; /* KB, reuse for paging & segmentation */
+    pagingAnalysis(procSize, 5, 1024, 12);            /* page size 1024KB, 12 frames = 12288KB */
+
+    int partitions[5] = {2500, 4000, 1300, 5000, 1600}; /* variable partitions, KB */
+    segmentationAnalysis(procSize, 5, partitions, 5);
+
+    /* ---- 4. File Allocation dataset ---- */
+    printf("\n============== MODULE 4: FILE ALLOCATION STRATEGIES ==============\n");
+    int fileBlocks[6] = {3, 5, 2, 8, 4, 6}; /* 6 files, sizes in blocks */
+    fileAllocationAnalysis(fileBlocks, 6, 40, 10); /* 40 disk blocks, 10 pre-occupied (fragmented) */
+
+    /* ---- 5. Disk Scheduling dataset ---- */
+    printf("\n============== MODULE 5: DISK SCHEDULING ==============\n");
+    int requests[12] = {82, 95, 30, 63, 12, 70, 25, 48, 90, 5, 77, 34};
+    int headStart = 50, maxCyl = 100;
+    printf("Requests (12): "); for (int i = 0; i < 12; i++) printf("%d ", requests[i]); printf("\n");
+    printf("Initial Head Position = %d | Cylinders = 0-%d\n\n", headStart, maxCyl - 1);
+
+    diskFCFS(requests, 12, headStart);
+    printf("\n");
+    diskSSTF(requests, 12, headStart);
+    printf("\n");
+    diskSCAN(requests, 12, headStart, maxCyl, 1);
+    printf("\n");
+    diskCSCAN(requests, 12, headStart, maxCyl);
+    printf("\n");
+    diskLOOK(requests, 12, headStart, 1);
+    printf("\n");
+    diskCLOOK(requests, 12, headStart);
+
+    printf("\n=====================================================================\n");
+    printf(" END OF ANALYSIS\n");
+    printf("=====================================================================\n");
+    return 0;
+}
